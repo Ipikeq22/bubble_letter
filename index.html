@@ -3,22 +3,87 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>珍珠奶茶 - 單字連線接接樂</title>
+    <title>Bubble Smash 珍珠大作戰</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <!-- Pixi Canvas Layer -->
     <div id="game-container"></div>
-    <div id="ui-layer">
-        <div id="score-board">SCORE: <span id="score">0</span></div>
-        <div id="status-message">Loading Dictionary...</div>
+
+    <!-- HUD Overlay (pointer-events: none globally, auto on buttons) -->
+    <div id="ui-overlay">
+
+        <!-- Top Bar -->
+        <div id="top-bar">
+            <div id="level-display">LEVEL <span id="level-num">1</span></div>
+            <div id="timer-display" style="display:none;">
+                ⏱ <span id="timer-value">60</span>s
+            </div>
+            <div id="boss-anger-bar" style="display:none;">
+                <span id="anger-label">👴怒氣</span>
+                <div id="anger-track">
+                    <div id="anger-fill"></div>
+                </div>
+                <span id="anger-value">100</span>
+            </div>
+        </div>
+
+        <!-- Side Panels -->
+        <div id="panels-row">
+
+            <!-- Left: Beverage Collection Progress -->
+            <div id="beverage-panel">
+                <div class="panel-title">🧋 收集進度</div>
+                <div id="collection-list">
+                    <!-- Dynamically populated -->
+                </div>
+            </div>
+
+            <!-- Right: Order Tablet -->
+            <div id="order-tablet">
+                <div class="panel-title">📋 訂單</div>
+                <div id="order-list">
+                    <!-- Dynamically populated -->
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Feedback Flash -->
+        <div id="feedback-banner" style="display:none;"></div>
+
     </div>
-    
-    <!-- Pixi.js -->
+
+    <!-- Start Screen (full overlay) -->
+    <div id="start-screen" class="screen-overlay">
+        <div class="overlay-card">
+            <h1>🧋 Bubble Smash</h1>
+            <p>連結 3 顆以上同色珍珠消除！<br>完成老闆的飲料訂單闖關！</p>
+            <button id="start-btn" class="big-btn">開始遊戲</button>
+        </div>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="game-over-screen" class="screen-overlay" style="display:none;">
+        <div class="overlay-card">
+            <h1>💔 老闆爆氣了！</h1>
+            <p>抵達關卡：<strong>Level <span id="final-level">1</span></strong></p>
+            <button id="restart-btn" class="big-btn">再試一次</button>
+        </div>
+    </div>
+
+    <!-- Level Clear Screen -->
+    <div id="level-clear-screen" class="screen-overlay" style="display:none;">
+        <div class="overlay-card success">
+            <h1>✅ 訂單完成！</h1>
+            <p id="level-clear-msg">繼續下一關…</p>
+            <button id="next-level-btn" class="big-btn">繼續</button>
+        </div>
+    </div>
+
+    <!-- Scripts -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
-    <!-- Matter.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
-    
-    <!-- Game Scripts -->
     <script src="game.js"></script>
 </body>
 </html>

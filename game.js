@@ -1,352 +1,456 @@
-// ====== Global Variables ======
-const Engine = Matter.Engine,
-      Runner = Matter.Runner,
-      Bodies = Matter.Bodies,
-      Composite = Matter.Composite,
-      Events = Matter.Events;
+// ========================================================
+//  Bubble Smash – game.js
+//  Pixi.js 7 + Matter.js 0.19  |  6-colour Pearl Blast
+// ========================================================
 
+// ====== Matter aliases ======
+const Engine    = Matter.Engine;
+const Runner    = Matter.Runner;
+const Bodies    = Matter.Bodies;
+const Composite = Matter.Composite;
+const Events    = Matter.Events;
+
+// ====== Pixi app & containers ======
 let app;
 let engine;
-let dictionary = new Set();
-let isGameReady = false;
-
-// Pixi Containers
 let gameStage, cupContainer, pearlsContainer, linesContainer;
-
-// Physics Bodies
-let pearls = [];
-let cupWalls = [];
-
-// Game State
-let gameOver = false;
-let spawnInterval;
-let cupTopY = 0;
-let overflowTimer = 0;
-let isDragging = false;
-let selectedPearls = [];
 let connectionLine;
 
-// UI Elements
-const scoreElement = document.getElementById('score');
-const statusMessage = document.getElementById('status-message');
-let score = 0;
+// ====== Physics ======
+let pearls   = [];
+let cupWalls = [];
 
-// ====== Setup System ======
-async function init() {
-    // 1. Initialise PixiJS
-    app = new PIXI.Application({
-        resizeTo: window,
-        backgroundColor: 0xeaded2, // Milky tea light background
-        resolution: window.devicePixelRatio || 1,
-        autoDensity: true,
-        antialias: true
-    });
-    document.getElementById('game-container').appendChild(app.view);
-    
-    // Set up containers
-    gameStage = new PIXI.Container();
-    cupContainer = new PIXI.Container();
-    pearlsContainer = new PIXI.Container();
-    linesContainer = new PIXI.Container();
-    
-    gameStage.addChild(cupContainer);
-    gameStage.addChild(pearlsContainer);
-    gameStage.addChild(linesContainer);
-    app.stage.addChild(gameStage);
+// ====== Interaction ======
+let isDragging    = false;
+let selectedPearls = [];
 
-    // Interaction setup
-    connectionLine = new PIXI.Graphics();
-    linesContainer.addChild(connectionLine);
-    
-    app.stage.eventMode = 'static';
-    app.stage.hitArea = new PIXI.Rectangle(-5000, -5000, 10000, 10000);
-    app.stage.on('pointerup', endDrag);
-    app.stage.on('pointerupoutside', endDrag);
-    app.stage.on('pointermove', onPointerMove);
+// ====== Game flags ======
+let isGameReady = false;
+let gameOver    = false;
+let spawnInterval = null;
+let cupTopY     = 0;
+let overflowTimer = 0;
 
-    // 2. Initialise Matter.js Engine
-    engine = Engine.create();
-    
-    // Create a runner
-    const runner = Runner.create();
-    Runner.run(runner, engine);
+// ====== Sound ======
+// (gracefully ignore missing files)
+function tryAudio(src) {
+    try { const a = new Audio(src); a.volume = 0.6; return a; }
+    catch(e) { return null; }
+}
+const sndBottom = tryAudio('mp3/buttum.mp3');
+const sndPearl  = tryAudio('mp3/bu_drop.mp3');
 
-    // 3. Game Loop mapping Matter to Pixi
-    app.ticker.add((delta) => {
-        // Sync Pearls
-        for (let i = 0; i < pearls.length; i++) {
-            const pearl = pearls[i];
-            pearl.view.position.x = pearl.body.position.x;
-            pearl.view.position.y = pearl.body.position.y;
-            pearl.view.rotation = pearl.body.angle;
-        }
-
-        // Draw connection line
-        connectionLine.clear();
-        if (isDragging && selectedPearls.length > 0) {
-            connectionLine.lineStyle(10, 0xffaa00, 0.8);
-            connectionLine.moveTo(selectedPearls[0].view.position.x, selectedPearls[0].view.position.y);
-            for (let i = 1; i < selectedPearls.length; i++) {
-                connectionLine.lineTo(selectedPearls[i].view.position.x, selectedPearls[i].view.position.y);
-            }
-            // Draw line to current mouse position
-            const mousePos = app.renderer.events.pointer.global;
-            connectionLine.lineTo(mousePos.x, mousePos.y);
-        }
-
-        // ====== Game Over Check ======
-        if (!gameOver && pearls.length > 15) {
-            // Check if any pearl is settled above the cup brim
-            let overflowing = false;
-            for (let i = 0; i < pearls.length; i++) {
-                const p = pearls[i];
-                // Require pearl to be visibly stacked OUTSIDE the cup and relatively stable
-                if (p.body.position.y < cupTopY - 50 && p.body.speed < 0.5) {
-                    overflowing = true;
-                    break;
-                }
-            }
-            if (overflowing) {
-                overflowTimer++;
-                // Wait for about 1.5 seconds (at 60fps) of consecutive overflowing state
-                if (overflowTimer > 90) {
-                    triggerGameOver();
-                }
-            } else {
-                overflowTimer = 0; // Reset if the pile falls back in
-            }
-        }
-    });
-
-    // Handle Window Resize
-    window.addEventListener('resize', handleResize);
-
-    // 4. Load Dictionary
-    await loadDictionary();
-
-    // 5. Build Level
-    buildCup();
-    
-    // 6. Start Spawning
-    if (dictionary.size > 0) {
-        isGameReady = true;
-        startSpawner();
+let lastBottomSound = 0, lastPearlSound = 0;
+function playOnce(audioEl, cooldown = 200) {
+    if (!audioEl) return;
+    const now = Date.now();
+    if (now - (audioEl._last || 0) > cooldown) {
+        audioEl._last = now;
+        const clone = audioEl.cloneNode();
+        clone.play().catch(() => {});
     }
 }
 
-// ====== Dictionary Fetch ======
-async function loadDictionary() {
-    statusMessage.style.display = 'block';
-    statusMessage.innerText = '載入單字庫中...\nLoading Dictionary...';
-    try {
-        const response = await fetch('https://raw.githubusercontent.com/first20hours/google-10000-english/master/google-10000-english-no-swears.txt');
-        if (!response.ok) throw new Error("Network response was not ok");
-        const text = await response.text();
-        const words = text.split('\n')
-                          .map(w => w.trim())
-                          .filter(w => w.length >= 2)
-                          .map(w => w.toUpperCase());
-        dictionary = new Set(words);
-        console.log(`Loaded ${dictionary.size} words.`);
-        statusMessage.style.display = 'none';
-    } catch (e) {
-        console.error("Failed to load dictionary, using fallback:", e);
-        statusMessage.innerText = '單字庫載入失敗，使用備用字庫！\nUsing Fallback Dictionary';
-        // Fallback minimal dictionary for testing
-        dictionary = new Set(['CAT', 'DOG', 'TEA', 'BOBA', 'MILK', 'CUP', 'SUN', 'FUN', 'RUN']);
-        setTimeout(() => { statusMessage.style.display = 'none'; }, 2000);
-    }
-}
-
-// ====== Game Objects ======
-function buildCup() {
-    // Clear existing
-    if (cupWalls.length > 0) Composite.remove(engine.world, cupWalls);
-    cupContainer.removeChildren();
-    
-    const w = app.screen.width;
-    const h = app.screen.height;
-    
-    // Cup dimensions
-    const cupW = Math.min(500, w * 0.85);
-    const cupH = Math.min(600, h * 0.65);
-    const cupW_half = cupW / 2;
-    const thickness = 40;
-    
-    const cx = w / 2;
-    const cy = h - cupH / 2 - 50; // offset from bottom
-    cupTopY = cy - cupH / 2;
-    
-    // Create Matter bodies (static)
-    const bottom = Bodies.rectangle(cx, cy + cupH/2, cupW + thickness * 2, thickness, { isStatic: true, friction: 0.1 });
-    const left = Bodies.rectangle(cx - cupW_half - thickness/2, cy, thickness, cupH, { isStatic: true, friction: 0.1 });
-    const right = Bodies.rectangle(cx + cupW_half + thickness/2, cy, thickness, cupH, { isStatic: true, friction: 0.1 });
-    
-    cupWalls = [bottom, left, right];
-    Composite.add(engine.world, cupWalls);
-    
-    // Draw Pixi Graphics
-    const graphics = new PIXI.Graphics();
-    
-    // Draw Glass Cup (Back and borders)
-    graphics.lineStyle(8, 0xffffff, 0.7);
-    graphics.beginFill(0xffffff, 0.25); // milky tea inner tint
-    
-    // We draw a U-shape outline
-    graphics.moveTo(cx - cupW_half, cy - cupH/2);
-    graphics.lineTo(cx - cupW_half, cy + cupH/2);
-    graphics.lineTo(cx + cupW_half, cy + cupH/2);
-    graphics.lineTo(cx + cupW_half, cy - cupH/2);
-    graphics.endFill();
-    
-    // Outer glow for glass
-    graphics.lineStyle(16, 0xffffff, 0.2);
-    graphics.moveTo(cx - cupW_half, cy - cupH/2);
-    graphics.lineTo(cx - cupW_half, cy + cupH/2);
-    graphics.lineTo(cx + cupW_half, cy + cupH/2);
-    graphics.lineTo(cx + cupW_half, cy - cupH/2);
-    
-    cupContainer.addChild(graphics);
-}
-
-function handleResize() {
-    app.renderer.resize(window.innerWidth, window.innerHeight);
-    buildCup();
-}
-
-// ====== Spawner ======
-const letterFreq = [
-    // Heavily weighted vowels for easier gameplay
-    'E','E','E','E','E','E','E','E','E','E','E','E','E','E','E','E','E','E','E','E',
-    'A','A','A','A','A','A','A','A','A','A','A','A','A','A','A',
-    'O','O','O','O','O','O','O','O','O','O','O','O',
-    'I','I','I','I','I','I','I','I','I','I','I','I',
-    'U','U','U','U','U','U','U','U',
-    // Common consonants
-    'T','T','T','T','T','T','T','T','T','T',
-    'N','N','N','N','N','N','N','N','N',
-    'S','S','S','S','S','S','S','S','S',
-    'R','R','R','R','R','R','R','R','R',
-    'H','H','H','H','H','H',
-    'L','L','L','L','L','L',
-    'D','D','D','D','D',
-    'C','C','C','C','C',
-    'M','M','M','M',
-    'F','F','F',
-    'P','P','P','G','G','G','W','W','Y','Y','B','B','V',
-    'K','X','J','Q','Z'
+// ====== 6-Colour Pearl Definition ======
+// Each entry has a key used in orders/collected maps
+const PEARL_TYPES = [
+    { key:'red',    label:'紅珍珠', base: 0xff595e, dark: 0xc92a31, css: '#ff595e' },
+    { key:'yellow', label:'黃珍珠', base: 0xffca3a, dark: 0xd69e00, css: '#ffca3a' },
+    { key:'green',  label:'綠珍珠', base: 0x8ac926, dark: 0x5a910a, css: '#8ac926' },
+    { key:'blue',   label:'藍珍珠', base: 0x1982c4, dark: 0x0f5685, css: '#1982c4' },
+    { key:'purple', label:'紫珍珠', base: 0x9b5de5, dark: 0x5c2d91, css: '#9b5de5' },
+    { key:'orange', label:'橘珍珠', base: 0xff9f1c, dark: 0xcf7400, css: '#ff9f1c' },
 ];
 
-function getRandomLetter() {
-    return letterFreq[Math.floor(Math.random() * letterFreq.length)];
+// ====== Level Data ======
+// Each level defines which pearl keys appear and what amounts are required.
+// Part 1-3: no time limit, no anger.  Part 4+: timer & anger active.
+const LEVEL_DATA = [
+    // Level 1 – intro, 2 colours, small amounts
+    { part: 1, allowedKeys: ['red','yellow'],              order: { red:4, yellow:3 },               timeLimit: 0 },
+    // Level 2 – 3 colours
+    { part: 2, allowedKeys: ['red','yellow','green'],      order: { red:5, green:4 },                timeLimit: 0 },
+    // Level 3 – warmup complete
+    { part: 3, allowedKeys: ['red','yellow','green','blue'], order: { red:5, yellow:4, green:3 },    timeLimit: 0 },
+    // Level 4 – timer & anger BEGIN (Part 4)
+    { part: 4, allowedKeys: ['red','yellow','green','blue','purple'], order: { red:6, blue:5, purple:4 }, timeLimit: 60 },
+    // Level 5
+    { part: 4, allowedKeys: PEARL_TYPES.map(p=>p.key),    order: { red:6, yellow:5, green:5 },      timeLimit: 55 },
+    // Level 6
+    { part: 4, allowedKeys: PEARL_TYPES.map(p=>p.key),    order: { blue:7, purple:5, orange:4 },    timeLimit: 50 },
+    // Level 7 – harder
+    { part: 4, allowedKeys: PEARL_TYPES.map(p=>p.key),    order: { red:8, yellow:6, green:5, blue:4 }, timeLimit: 50 },
+    // Level 8
+    { part: 4, allowedKeys: PEARL_TYPES.map(p=>p.key),    order: { red:8, orange:7, purple:6 },     timeLimit: 45 },
+    // Level 9+ repeat with increasing difficulty handled by repeatLevel()
+];
+
+// ====== Game State ======
+let currentLevelIdx = 0;   // index into LEVEL_DATA
+let currentOrder   = {};   // { red:6, blue:5, ... }
+let collected      = {};   // { red:0, blue:0, ... }
+let bossAnger      = 100;
+let isTimeLimitActive = false;
+let timerValue     = 60;
+let timerInterval  = null;
+let spawnPool      = [];   // which pearl types are currently spawnable
+
+// ====== DOM Handles ======
+const domLevelNum      = document.getElementById('level-num');
+const domTimerDisplay  = document.getElementById('timer-display');
+const domTimerValue    = document.getElementById('timer-value');
+const domBossAngerBar  = document.getElementById('boss-anger-bar');
+const domAngerFill     = document.getElementById('anger-fill');
+const domAngerValue    = document.getElementById('anger-value');
+const domCollectionList= document.getElementById('collection-list');
+const domOrderList     = document.getElementById('order-list');
+const domFeedback      = document.getElementById('feedback-banner');
+const domStartScreen   = document.getElementById('start-screen');
+const domGameOverScreen= document.getElementById('game-over-screen');
+const domLevelClear    = document.getElementById('level-clear-screen');
+const domFinalLevel    = document.getElementById('final-level');
+const domLevelClearMsg = document.getElementById('level-clear-msg');
+const domStartBtn      = document.getElementById('start-btn');
+const domRestartBtn    = document.getElementById('restart-btn');
+const domNextLevelBtn  = document.getElementById('next-level-btn');
+
+// ========================================================
+//  INIT
+// ========================================================
+async function init() {
+    // --- PixiJS ---
+    app = new PIXI.Application({
+        resizeTo: window,
+        backgroundColor: 0xF2DCC2,
+        resolution: window.devicePixelRatio || 1,
+        autoDensity: true,
+        antialias: true,
+    });
+    document.getElementById('game-container').appendChild(app.view);
+
+    gameStage      = new PIXI.Container();
+    cupContainer   = new PIXI.Container();
+    pearlsContainer= new PIXI.Container();
+    linesContainer = new PIXI.Container();
+    gameStage.addChild(cupContainer, pearlsContainer, linesContainer);
+    app.stage.addChild(gameStage);
+
+    connectionLine = new PIXI.Graphics();
+    linesContainer.addChild(connectionLine);
+
+    // Interaction
+    app.stage.eventMode = 'static';
+    app.stage.hitArea   = new PIXI.Rectangle(-5000, -5000, 10000, 10000);
+    app.stage.on('pointerup',        endDrag);
+    app.stage.on('pointerupoutside', endDrag);
+    app.stage.on('pointermove',      onPointerMove);
+
+    // --- Matter.js ---
+    engine = Engine.create();
+    Runner.run(Runner.create(), engine);
+
+    // Sound on collision
+    Events.on(engine, 'collisionStart', (e) => {
+        if (gameOver || !isGameReady) return;
+        for (const pair of e.pairs) {
+            const isWall = cupWalls.some(w =>
+                pair.bodyA.id === w.id || pair.bodyB.id === w.id
+            );
+            const speed = Math.max(pair.bodyA.speed, pair.bodyB.speed);
+            if (isWall && speed > 1) { playOnce(sndBottom, 200); break; }
+        }
+    });
+
+    // --- Game tick ---
+    app.ticker.add(gameTick);
+
+    // --- Window resize ---
+    window.addEventListener('resize', () => {
+        app.renderer.resize(window.innerWidth, window.innerHeight);
+        buildCup();
+    });
+
+    // --- Button events ---
+    domStartBtn.addEventListener('click', startGame);
+    domRestartBtn.addEventListener('click', restartGame);
+    domNextLevelBtn.addEventListener('click', advanceLevel);
+
+    // --- Build Cup ---
+    buildCup();
+
+    isGameReady     = true;
+    domStartBtn.disabled = false;
+}
+
+// ========================================================
+//  GAME TICK
+// ========================================================
+function gameTick() {
+    // Sync physics -> Pixi
+    for (const pearl of pearls) {
+        pearl.view.position.x = pearl.body.position.x;
+        pearl.view.position.y = pearl.body.position.y;
+        pearl.view.rotation   = pearl.body.angle;
+    }
+
+    // Draw connection line
+    connectionLine.clear();
+    if (isDragging && selectedPearls.length > 0) {
+        connectionLine.lineStyle(10, 0xffaa00, 0.85);
+        connectionLine.moveTo(selectedPearls[0].view.position.x, selectedPearls[0].view.position.y);
+        for (let i = 1; i < selectedPearls.length; i++) {
+            connectionLine.lineTo(selectedPearls[i].view.position.x, selectedPearls[i].view.position.y);
+        }
+        const mp = app.renderer.events.pointer.global;
+        connectionLine.lineTo(mp.x, mp.y);
+    }
+
+    // Overflow check (game over by spill)
+    if (!gameOver && pearls.length > 18) {
+        let overflowing = false;
+        for (const p of pearls) {
+            if (p.body.position.y < cupTopY - 60 && p.body.speed < 0.5) {
+                overflowing = true; break;
+            }
+        }
+        if (overflowing) {
+            overflowTimer++;
+            if (overflowTimer > 120) triggerGameOver('overflow');
+        } else {
+            overflowTimer = 0;
+        }
+    }
+}
+
+// ========================================================
+//  CUP PHYSICS + VISUALS
+// ========================================================
+function buildCup() {
+    if (cupWalls.length > 0) Composite.remove(engine.world, cupWalls);
+    cupContainer.removeChildren();
+
+    const w = app.screen.width, h = app.screen.height;
+    const cupTopW    = Math.min(480, w * 0.82);
+    const cupBottomW = cupTopW * 0.6;
+    const cupH       = Math.min(580, h * 0.65);
+    const thickness  = 40;
+
+    const cx = w / 2;
+    const cy = h - cupH / 2 - 50;
+    cupTopY  = cy - cupH / 2;
+
+    const wallAngle  = Math.atan2((cupTopW - cupBottomW) / 2, cupH);
+    const wallLength = Math.hypot((cupTopW - cupBottomW) / 2, cupH);
+    const leftX  = cx - (cupTopW + cupBottomW) / 4;
+    const rightX = cx + (cupTopW + cupBottomW) / 4;
+
+    const bottom = Bodies.rectangle(cx, cy + cupH/2, cupBottomW + thickness*2, thickness, { isStatic:true, friction:0.2 });
+    const left   = Bodies.rectangle(leftX,  cy, thickness, wallLength + thickness, { isStatic:true, friction:0.2, angle: -wallAngle });
+    const right  = Bodies.rectangle(rightX, cy, thickness, wallLength + thickness, { isStatic:true, friction:0.2, angle:  wallAngle });
+
+    cupWalls = [bottom, left, right];
+    Composite.add(engine.world, cupWalls);
+
+    // Draw cup – clean lines aligned with physics
+    const g = new PIXI.Graphics();
+
+    const vThick    = thickness / 2;
+    const topY      = cy - cupH / 2;
+    const innerBotY = cy + cupH / 2 - vThick;
+    const iTL = cx - cupTopW / 2;
+    const iTR = cx + cupTopW / 2;
+    const iBL = cx - cupBottomW / 2;
+    const iBR = cx + cupBottomW / 2;
+
+    // 內腔半透明填色
+    g.lineStyle(0);
+    g.beginFill(0xc8956a, 0.10);
+    g.moveTo(iTL, topY);
+    g.lineTo(iBL, innerBotY);
+    g.lineTo(iBR, innerBotY);
+    g.lineTo(iTR, topY);
+    g.closePath();
+    g.endFill();
+
+    // 中央淡光帶
+    g.beginFill(0xfff5e6, 0.07);
+    g.moveTo(cx + cupTopW * 0.05, topY);
+    g.lineTo(cx + cupTopW * 0.22, topY);
+    g.lineTo(cx + cupBottomW * 0.18, innerBotY);
+    g.lineTo(cx + cupBottomW * 0.04, innerBotY);
+    g.closePath();
+    g.endFill();
+
+    // 外框深色線
+    g.lineStyle(4, 0x7a4a1a, 0.9);
+    g.moveTo(iTL, topY);
+    g.lineTo(iBL, innerBotY);
+    g.lineTo(iBR, innerBotY);
+    g.lineTo(iTR, topY);
+
+    // 內緣亮線（光澤感）
+    g.lineStyle(1.5, 0xffd9a0, 0.45);
+    g.moveTo(iTL + 3, topY);
+    g.lineTo(iBL + 2, innerBotY);
+    g.moveTo(iTR - 3, topY);
+    g.lineTo(iBR - 2, innerBotY);
+
+    cupContainer.addChild(g);
+}
+
+// ========================================================
+//  PEARL SPAWNER
+// ========================================================
+const PEARL_MIN   = 20;   // 最低珍珠數
+const SPAWN_CHECK = 900;  // 檢查間隔 ms
+
+function isCupOverfull() {
+    // 有靜止珍珠超過杯頂則視為滿
+    for (const p of pearls) {
+        if (p.body.position.y < cupTopY && p.body.speed < 0.6) return true;
+    }
+    return false;
+}
+
+function spawnBatch(count) {
+    for (let i = 0; i < count; i++) {
+        setTimeout(spawnPearl, i * 160);
+    }
 }
 
 function startSpawner() {
-    spawnInterval = setInterval(spawnPearl, 1800);
+    stopSpawner();
+    // 開局掉 20 顆
+    spawnBatch(PEARL_MIN);
+    // 之後定期檢查補珠
+    spawnInterval = setInterval(() => {
+        if (gameOver) return;
+        if (isCupOverfull()) return;          // 過滿暫停
+        if (pearls.length < PEARL_MIN) {
+            const add = Math.floor(Math.random() * 8) + 1;   // 1~8 顆
+            spawnBatch(add);
+        }
+    }, SPAWN_CHECK);
+}
+
+function stopSpawner() {
+    if (spawnInterval) { clearInterval(spawnInterval); spawnInterval = null; }
 }
 
 function spawnPearl() {
     if (gameOver) return;
-    
-    const radius = 25 + Math.random() * 15; // 25 to 40 px radius
-    const cupW = Math.min(500, app.screen.width * 0.85);
-    const x = app.screen.width / 2 + (Math.random() - 0.5) * (cupW - radius * 3);
-    const y = -radius;
-    
-    const letter = getRandomLetter();
-    
-    // Physics body
+
+    const typeEntry = spawnPool[Math.floor(Math.random() * spawnPool.length)];
+    const radius    = 22 + Math.random() * 14;
+    const cupTopW   = Math.min(480, app.screen.width * 0.82);
+    const x         = app.screen.width / 2 + (Math.random() - 0.5) * (cupTopW - radius * 3);
+    const y         = -radius;
+
     const body = Bodies.circle(x, y, radius, {
-        restitution: 0.1, // very slight bounce
-        friction: 0.8,
-        density: 0.002
+        restitution: 0.15,
+        friction: 0.7,
+        density: 0.002,
     });
-    
-    // Pixi View
-    const pearlView = new PIXI.Container();
-    
-    // Boba Graphics
-    const graphics = new PIXI.Graphics();
-    
-    // Shadow
-    graphics.beginFill(0x1a0f08, 0.95);
-    graphics.drawCircle(0, 0, radius);
-    graphics.endFill();
-    // Inner light gradient simulation
-    graphics.beginFill(0x3a2113, 0.95);
-    graphics.drawCircle(-radius*0.1, -radius*0.1, radius*0.8);
-    graphics.endFill();
-    
-    // Boba reflection
-    graphics.beginFill(0xffffff, 0.3);
-    graphics.drawEllipse(-radius*0.35, -radius*0.35, radius*0.25, radius*0.15);
-    graphics.endFill();
-    
-    // Letter Text
-    const textInfo = new PIXI.Text(letter, {
-        fontFamily: 'Inter, Arial, sans-serif',
-        fontSize: Math.max(20, radius * 0.8),
-        fill: 0xffe9c9, // light milk tea text color
-        fontWeight: '900',
-        stroke: 0x1a0f08,
-        strokeThickness: 2
-    });
-    textInfo.anchor.set(0.5);
-    
-    pearlView.addChild(graphics);
-    pearlView.addChild(textInfo);
-    
-    pearlsContainer.addChild(pearlView);
-    
-    const pearlObj = { body, view: pearlView, letter, radius, id: body.id };
+
+    const view = new PIXI.Container();
+    const g    = new PIXI.Graphics();
+    drawPearlGraphic(g, typeEntry, radius);
+    view.addChild(g);
+    pearlsContainer.addChild(view);
+
+    const pearlObj = { body, view, radius, id: body.id, type: typeEntry };
     pearls.push(pearlObj);
-    
-    // Interaction
-    pearlView.eventMode = 'static';
-    pearlView.cursor = 'pointer';
-    pearlView.on('pointerdown', (e) => {
-        e.stopPropagation();
-        startDrag(pearlObj);
-    });
-    pearlView.on('pointerenter', () => onDragEnter(pearlObj));
-    
+
+    view.eventMode = 'static';
+    view.cursor    = 'pointer';
+    view.on('pointerdown', (e) => { e.stopPropagation(); startDrag(pearlObj); });
+    view.on('pointerenter', ()  => onDragEnter(pearlObj));
+
     Composite.add(engine.world, body);
 }
 
-// ====== Interaction Logic ======
+function drawPearlGraphic(g, typeEntry, r, highlighted = false) {
+    g.clear();
+    if (highlighted) {
+        // 白色外光暈邊框
+        g.beginFill(0xffffff, 0.9);
+        g.drawCircle(0, 0, r + 5);
+        g.endFill();
+    }
+    // 保留原本顏色（不論是否高亮）
+    g.beginFill(typeEntry.dark, 0.98);
+    g.drawCircle(0, 0, r);
+    g.endFill();
+    g.beginFill(typeEntry.base, 0.95);
+    g.drawCircle(-r*0.1, -r*0.1, r * 0.82);
+    g.endFill();
+    // 高亮時加上半透明橘色覆層讓選取感更明顯
+    if (highlighted) {
+        g.beginFill(0xffdd00, 0.25);
+        g.drawCircle(0, 0, r);
+        g.endFill();
+    }
+    // 光澤高光
+    g.beginFill(0xffffff, 0.32);
+    g.drawEllipse(-r*0.32, -r*0.32, r*0.24, r*0.14);
+    g.endFill();
+}
 
+// ========================================================
+//  DRAG / CONNECTION LOGIC
+// ========================================================
 function startDrag(pearl) {
     if (gameOver) return;
-    isDragging = true;
+    isDragging     = true;
     selectedPearls = [pearl];
     highlightPearl(pearl, true);
+    playOnce(sndPearl, 80);
+}
+
+function ptSegDist(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx*dx + dy*dy;
+    if (len2 === 0) return Math.hypot(px - ax, py - ay);
+    const t = Math.max(0, Math.min(1, ((px-ax)*dx + (py-ay)*dy) / len2));
+    return Math.hypot(px - (ax + t*dx), py - (ay + t*dy));
+}
+
+function isLineBlocked(from, to) {
+    const ax = from.body.position.x, ay = from.body.position.y;
+    const bx = to.body.position.x,   by = to.body.position.y;
+    for (const p of pearls) {
+        if (p.id === from.id || p.id === to.id) continue;
+        if (selectedPearls.find(sp => sp.id === p.id)) continue;
+        const d = ptSegDist(p.body.position.x, p.body.position.y, ax, ay, bx, by);
+        if (d < p.radius * 0.75) return true;
+    }
+    return false;
 }
 
 function onDragEnter(pearl) {
     if (!isDragging || gameOver) return;
     if (selectedPearls.find(p => p.id === pearl.id)) return;
-    
-    const lastPearl = selectedPearls[selectedPearls.length - 1];
-    const dist = Math.hypot(lastPearl.body.position.x - pearl.body.position.x, lastPearl.body.position.y - pearl.body.position.y);
-    const maxDist = (lastPearl.radius + pearl.radius) * 2.5; // Easier to connect across gaps
 
-    
-    if (dist <= maxDist) {
+    const last = selectedPearls[selectedPearls.length - 1];
+    if (pearl.type.key !== last.type.key) return;
+
+    const dist    = Math.hypot(last.body.position.x - pearl.body.position.x,
+                               last.body.position.y - pearl.body.position.y);
+    const maxDist = (last.radius + pearl.radius) * 1.5;  // 僅允許緊鄰
+    if (dist <= maxDist && !isLineBlocked(last, pearl)) {
         selectedPearls.push(pearl);
         highlightPearl(pearl, true);
+        playOnce(sndPearl, 80);
     }
 }
 
 function onPointerMove(e) {
     if (!isDragging || gameOver) return;
     const pos = e.global;
-    
-    for (let p of pearls) {
+    for (const p of pearls) {
         if (!selectedPearls.find(sp => sp.id === p.id)) {
-            const dist = Math.hypot(p.body.position.x - pos.x, p.body.position.y - pos.y);
-            if (dist < p.radius) {
-                onDragEnter(p);
-            }
+            const d = Math.hypot(p.body.position.x - pos.x, p.body.position.y - pos.y);
+            if (d < p.radius) onDragEnter(p);
         }
     }
 }
@@ -354,95 +458,319 @@ function onPointerMove(e) {
 function endDrag() {
     if (!isDragging) return;
     isDragging = false;
-    
-    if (selectedPearls.length > 0) {
-        const word = selectedPearls.map(p => p.letter).join('');
-        
-        if (word.length >= 2 && dictionary.has(word)) {
-            // Valid Word!
-            console.log("Valid Word:", word);
-            score += word.length * 100;
-            scoreElement.innerText = score;
-            
-            showFloatingText(word, word.length * 100, selectedPearls[0].body.position);
-            
-            selectedPearls.forEach(p => {
-                Composite.remove(engine.world, p.body);
-                pearlsContainer.removeChild(p.view);
-                pearls = pearls.filter(gp => gp.id !== p.id);
-            });
+
+    if (selectedPearls.length >= 3) {
+        // Valid connection!
+        const colorKey = selectedPearls[0].type.key;
+        const count    = selectedPearls.length;
+
+        // Check if this colour is in the current order
+        if (isTimeLimitActive && !(colorKey in currentOrder)) {
+            // Wrong colour: penalise in Part 4+
+            damageAnger(15);
+            showFeedback(`❌ 錯誤顏色！-15 怒`, 'fail', 1200);
         } else {
-            // Invalid Word
-            selectedPearls.forEach(p => highlightPearl(p, false));
+            // Count toward collected
+            collected[colorKey] = (collected[colorKey] || 0) + count;
+            // Cap at order requirement
+            if (colorKey in currentOrder) {
+                collected[colorKey] = Math.min(collected[colorKey], currentOrder[colorKey]);
+            }
+            updateBeveragePanel();
+            showFloatingText(`+${count}`, selectedPearls[0].body.position, selectedPearls[0].type.css);
         }
+
+        // Remove pearls from world
+        for (const p of selectedPearls) {
+            Composite.remove(engine.world, p.body);
+            pearlsContainer.removeChild(p.view);
+            pearls = pearls.filter(gp => gp.id !== p.id);
+        }
+
+        checkOrderComplete();
+
+    } else {
+        // Too few – just unhighlight
+        for (const p of selectedPearls) highlightPearl(p, false);
     }
+
     selectedPearls = [];
 }
 
-function highlightPearl(pearl, isHighlighted) {
+function highlightPearl(pearl, on) {
     const g = pearl.view.children[0];
-    g.clear();
-    
-    const r = pearl.radius;
-    if (isHighlighted) {
-        g.beginFill(0xffaa00, 0.95);
-    } else {
-        g.beginFill(0x1a0f08, 0.95);
-    }
-    g.drawCircle(0, 0, r);
-    g.endFill();
-    
-    if (!isHighlighted) {
-        g.beginFill(0x3a2113, 0.95);
-        g.drawCircle(-r*0.1, -r*0.1, r*0.8);
-        g.endFill();
-    }
-    g.beginFill(0xffffff, 0.3);
-    g.drawEllipse(-r*0.35, -r*0.35, r*0.25, r*0.15);
-    g.endFill();
+    drawPearlGraphic(g, pearl.type, pearl.radius, on);
 }
 
-function showFloatingText(word, points, pos) {
-    const textInfo = new PIXI.Text(`${word}\n+${points}`, {
-        fontFamily: 'Inter, Arial, sans-serif',
-        fontSize: 30,
-        fill: 0xffaa00,
-        fontWeight: '900',
-        stroke: 0xffffff,
-        strokeThickness: 5,
-        align: 'center'
-    });
-    textInfo.position.set(pos.x, pos.y);
-    textInfo.anchor.set(0.5);
-    gameStage.addChild(textInfo);
-    
-    let time = 0;
-    const ticker = () => {
-        time += 1;
-        textInfo.y -= 2;
-        textInfo.alpha -= 0.02;
-        if (time > 50) {
-            gameStage.removeChild(textInfo);
-            app.ticker.remove(ticker);
-        }
+// ========================================================
+//  ORDER / LEVEL SYSTEM
+// ========================================================
+function getLevelDef(idx) {
+    if (idx < LEVEL_DATA.length) return LEVEL_DATA[idx];
+    // Generated levels for idx >= LEVEL_DATA.length
+    const base    = LEVEL_DATA[LEVEL_DATA.length - 1];
+    const extra   = idx - LEVEL_DATA.length + 1;
+    const newOrder= {};
+    for (const [k, v] of Object.entries(base.order)) {
+        newOrder[k] = v + extra * 2;
+    }
+    return {
+        part: 4,
+        allowedKeys: PEARL_TYPES.map(p => p.key),
+        order: newOrder,
+        timeLimit: Math.max(30, base.timeLimit - extra * 3),
     };
-    app.ticker.add(ticker);
+}
+
+function loadLevel(idx) {
+    const def = getLevelDef(idx);
+
+    // Stop previous timer
+    stopTimer();
+
+    // Set state
+    currentOrder = { ...def.order };
+    collected    = {};
+    for (const k of Object.keys(currentOrder)) collected[k] = 0;
+
+    spawnPool = def.allowedKeys.map(k => PEARL_TYPES.find(t => t.key === k));
+
+    // Update HUD level number
+    domLevelNum.textContent = idx + 1;
+
+    // Timer & Anger
+    isTimeLimitActive = (def.part >= 4);
+    if (isTimeLimitActive) {
+        timerValue = def.timeLimit;
+        domTimerDisplay.style.display = 'block';
+        domBossAngerBar.style.display = 'flex';
+        domTimerValue.textContent     = timerValue;
+        domTimerDisplay.classList.remove('urgent');
+        updateAngerUI();
+        startTimer();
+    } else {
+        domTimerDisplay.style.display = 'none';
+        domBossAngerBar.style.display = 'none';
+    }
+
+    updateOrderTablet();
+    updateBeveragePanel();
+}
+
+function startTimer() {
+    stopTimer();
+    timerInterval = setInterval(() => {
+        if (gameOver) { stopTimer(); return; }
+        timerValue--;
+        domTimerValue.textContent = timerValue;
+        if (timerValue <= 10) domTimerDisplay.classList.add('urgent');
+        if (timerValue <= 0) {
+            stopTimer();
+            // Time out: damage and restart level
+            damageAnger(25);
+            showFeedback('⏰ 超時！-25 怒氣', 'fail', 1500);
+            setTimeout(() => {
+                if (!gameOver) resetCurrentLevel();
+            }, 1600);
+        }
+    }, 1000);
+}
+
+function stopTimer() {
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+}
+
+function damageAnger(amount) {
+    bossAnger = Math.max(0, bossAnger - amount);
+    updateAngerUI();
+    if (bossAnger <= 0) {
+        setTimeout(triggerGameOver, 400);
+    }
+}
+
+function updateAngerUI() {
+    const pct = bossAnger;
+    domAngerFill.style.width  = pct + '%';
+    domAngerValue.textContent = bossAnger;
+    if (pct > 50) {
+        domAngerFill.style.background = 'linear-gradient(90deg,#ff4444,#ff9900)';
+    } else if (pct > 25) {
+        domAngerFill.style.background = 'linear-gradient(90deg,#ff2020,#ff6600)';
+    } else {
+        domAngerFill.style.background = 'linear-gradient(90deg,#cc0000,#ff2000)';
+    }
+}
+
+function updateOrderTablet() {
+    domOrderList.innerHTML = '';
+    for (const [key, needed] of Object.entries(currentOrder)) {
+        const typeEntry = PEARL_TYPES.find(t => t.key === key);
+        const done      = (collected[key] || 0) >= needed;
+        const row       = document.createElement('div');
+        row.className   = 'order-row';
+        row.innerHTML   = `
+            <span class="pearl-dot" style="background:${typeEntry.css};box-shadow:0 0 8px ${typeEntry.css};"></span>
+            <span class="order-text ${done?'done':''}">${typeEntry.label} ×${needed}</span>
+        `;
+        domOrderList.appendChild(row);
+    }
+}
+
+function updateBeveragePanel() {
+    domCollectionList.innerHTML = '';
+    for (const [key, needed] of Object.entries(currentOrder)) {
+        const typeEntry = PEARL_TYPES.find(t => t.key === key);
+        const have      = collected[key] || 0;
+        const pct       = Math.min(100, Math.round((have / needed) * 100));
+        const done      = have >= needed;
+        const row       = document.createElement('div');
+        row.className   = 'order-row';
+        row.style.flexDirection = 'column';
+        row.style.gap = '3px';
+        row.innerHTML   = `
+            <div style="display:flex;align-items:center;gap:6px;">
+                <span class="pearl-dot" style="background:${typeEntry.css};"></span>
+                <span class="order-text" style="font-size:0.85rem;${done?'color:#6eff8a':''}">
+                    ${have}/${needed}
+                </span>
+            </div>
+            <div class="collect-bar-wrap">
+                <div class="collect-bar" style="width:${pct}%;background:${typeEntry.css};"></div>
+            </div>
+        `;
+        domCollectionList.appendChild(row);
+    }
+    // Also refresh order tablet tick marks
+    updateOrderTablet();
+}
+
+function checkOrderComplete() {
+    for (const [key, needed] of Object.entries(currentOrder)) {
+        if ((collected[key] || 0) < needed) return false;
+    }
+    // All done!
+    stopTimer();
+    stopSpawner();
+    showFeedback('🎉 訂單完成！', 'success', 0);
+    const nextIdx = currentLevelIdx + 1;
+    domLevelClearMsg.textContent = `準備 Level ${nextIdx + 1}…`;
+    setTimeout(() => {
+        domFeedback.style.display = 'none';
+        domLevelClear.style.display = 'flex';
+    }, 1200);
+    return true;
+}
+
+function advanceLevel() {
+    domLevelClear.style.display = 'none';
+    currentLevelIdx++;
+    clearPearls();
+    loadLevel(currentLevelIdx);
+    startSpawner();
+}
+
+function resetCurrentLevel() {
+    stopSpawner();
+    clearPearls();
+    loadLevel(currentLevelIdx);
+    startSpawner();
+}
+
+// ========================================================
+//  FLOATING TEXT
+// ========================================================
+function showFloatingText(text, pos, cssColor) {
+    const hexColor = parseInt(cssColor.replace('#',''), 16);
+    const t = new PIXI.Text(text, {
+        fontFamily: 'Segoe UI, Arial',
+        fontSize:   28,
+        fontWeight: '900',
+        fill:       hexColor,
+        stroke:     0x000000,
+        strokeThickness: 5,
+        align: 'center',
+    });
+    t.position.set(pos.x, pos.y);
+    t.anchor.set(0.5);
+    gameStage.addChild(t);
+    let tick = 0;
+    const loop = () => {
+        tick++;
+        t.y -= 1.8;
+        t.alpha -= 0.022;
+        if (tick > 45) { gameStage.removeChild(t); app.ticker.remove(loop); }
+    };
+    app.ticker.add(loop);
+}
+
+function showFeedback(msg, cls = 'warn', autoDismissMs = 1500) {
+    domFeedback.textContent = msg;
+    domFeedback.className   = cls;
+    domFeedback.style.display = 'block';
+    if (autoDismissMs > 0) {
+        setTimeout(() => { domFeedback.style.display = 'none'; }, autoDismissMs);
+    }
+}
+
+// ========================================================
+//  GAME FLOW
+// ========================================================
+function startGame() {
+    domStartScreen.style.display = 'none';
+    currentLevelIdx = 0;
+    bossAnger       = 100;
+    gameOver        = false;
+
+    clearPearls();
+    loadLevel(currentLevelIdx);
+    startSpawner();
+}
+
+function restartGame() {
+    domGameOverScreen.style.display = 'none';
+    domLevelClear.style.display     = 'none';
+    domFeedback.style.display       = 'none';
+    currentLevelIdx = 0;
+    bossAnger       = 100;
+    gameOver        = false;
+
+    // Remove dim overlay if any
+    const dims = app.stage.children.filter(c => c.isDimming);
+    dims.forEach(d => app.stage.removeChild(d));
+
+    clearPearls();
+    loadLevel(currentLevelIdx);
+    startSpawner();
 }
 
 function triggerGameOver() {
+    if (gameOver) return;
     gameOver = true;
-    clearInterval(spawnInterval);
-    statusMessage.innerText = `遊戲結束！滿出來啦！\nGame Over\n最終分數 / Final Score : ${score}`;
-    statusMessage.style.display = 'block';
-    statusMessage.style.background = 'rgba(230, 80, 80, 0.9)';
-    
-    // Screen dim
+    stopTimer();
+    stopSpawner();
+
+    // dim canvas
     const dim = new PIXI.Graphics();
-    dim.beginFill(0x000000, 0.6);
+    dim.isDimming = true;
+    dim.beginFill(0x000000, 0.65);
     dim.drawRect(0, 0, app.screen.width, app.screen.height);
     dim.endFill();
     app.stage.addChild(dim);
+
+    domFinalLevel.textContent = currentLevelIdx + 1;
+    setTimeout(() => { domGameOverScreen.style.display = 'flex'; }, 600);
 }
 
-// Start
+function clearPearls() {
+    for (const p of pearls) {
+        Composite.remove(engine.world, p.body);
+        pearlsContainer.removeChild(p.view);
+    }
+    pearls = [];
+    overflowTimer = 0;
+}
+
+// ========================================================
+//  BOOT
+// ========================================================
 window.onload = init;
