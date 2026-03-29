@@ -12,19 +12,33 @@
 
     <!-- HUD Overlay (pointer-events: none globally, auto on buttons) -->
     <div id="ui-overlay">
-
+        <!-- 頂部提示訊息橫幅 -->
+        <div id="feedback-banner" class="hidden"></div>
+        
         <!-- Top Bar -->
         <div id="top-bar">
-            <div id="level-display">LEVEL <span id="level-num">1</span></div>
-            <div id="timer-display" style="display:none;">
-                ⏱ <span id="timer-value">60</span>s
-            </div>
-            <div id="boss-anger-bar" style="display:none;">
-                <span id="anger-label">👴怒氣</span>
-                <div id="anger-track">
-                    <div id="anger-fill"></div>
+            <!-- [A] 豪華版 Wallet -->
+            <div id="money-box" class="simple-hud-box">
+                <div class="hud-icon-container">
+                    <img src="https://cdn-icons-png.flaticon.com/128/2489/2489756.png" class="hud-icon" alt="Coins">
                 </div>
-                <span id="anger-value">100</span>
+                <span id="money-value" class="hud-value">$0</span>
+            </div>
+
+            <!-- [B] 等級與生命值 -->
+            <div class="center-info">
+                <div id="level-display" class="simple-hud-box">
+                    <span class="hud-label">LEVEL</span>
+                    <span id="level-num" class="hud-value">1</span>
+                </div>
+                <!-- 新增：老闆生命值 (愛心 HP) -->
+                <div id="hp-hearts-container" class="hp-hearts">
+                    <span class="heart active">❤️</span>
+                    <span class="heart active">❤️</span>
+                    <span class="heart active">❤️</span>
+                    <span class="heart active">❤️</span>
+                    <span class="heart active">❤️</span>
+                </div>
             </div>
         </div>
 
@@ -33,40 +47,110 @@
 
             <!-- Left: Beverage Collection Progress -->
             <div id="beverage-panel">
-                <div class="panel-title">🧋 收集進度</div>
-                <div id="collection-list">
-                    <!-- Dynamically populated -->
+                <div class="status-row redesign">
+                    <div class="status-label">🧋 收集進度</div>
+                    <div id="collection-list" class="status-items">
+                        <!-- Dynamically populated in game.js -->
+                    </div>
+                </div>
+                <div class="tea-shelf-container">
+                    <img src="png/tea_can_before.png" class="tea-cup-img" alt="Milk Tea">
+                    <div class="shelf-bar"></div>
                 </div>
             </div>
 
-            <!-- Right: Order Tablet -->
-            <div id="order-tablet">
-                <div class="panel-title">📋 訂單</div>
-                <div id="order-list">
-                    <!-- Dynamically populated -->
+            <!-- Right: Order Management Area (Multi-Order Grid) -->
+            <div id="order-management-area" class="order-management-wrapper">
+                <div class="section-header">
+                    <span class="section-title">🎀 待處理訂單</span>
+                    <div id="order-count-badge" class="order-count">0</div>
+                </div>
+                <div id="order-grid" class="order-grid">
+                    <!-- 這裡會由 game.js 動態生成 .order-card -->
                 </div>
             </div>
 
         </div>
 
-        <!-- Feedback Flash -->
-        <div id="feedback-banner" style="display:none;"></div>
+        <!-- [B] Dropper Spout (Cartoon Style Lid) -->
+        <div id="dropper-spout">
+            <div class="cute-lid-top"></div>
+            <div class="cute-lid-body">
+                <div class="cute-stripe"></div>
+                <div class="btn-socket">
+                    <button id="pause-btn" class="spout-control-btn pause" title="暫停遊戲"><span class="btn-icon"></span></button>
+                </div>
+                <div id="warning-light" class="cute-warning-light"></div>
+                <div class="btn-socket">
+                    <button id="ad-btn" class="spout-control-btn ad" title="觀看廣告領獎勵"><span class="btn-icon"></span></button>
+                </div>
+                <div class="cute-stripe"></div>
+            </div>
+            <!-- 移除了最底層黑洞 -->
+        </div>
+
+        <!-- [C] Shake Button (重疊於機台中央) -->
+        <button id="shake-btn" class="shake-btn">
+            <img src="https://cdn-icons-png.flaticon.com/128/7923/7923318.png" alt="shake">
+        </button>
+
+        <!-- [D] Item Bar (Level 5+ 才顯示，預設隱藏) -->
+        <div id="item-bar" class="hidden">
+            
+            <div class="item-slots">
+                <div class="item-slot lock" data-item="bomb" title="炸彈 (Level 5)">
+                    <span class="icon">🔒</span><span class="badge">0</span>
+                </div>
+                <div class="item-slot lock" data-item="clear_color" title="消失球 (Level 10)">
+                    <span class="icon">🔒</span><span class="badge">0</span>
+                </div>
+                <div class="item-slot lock" data-item="color_swap" title="上色槍 (Level 15)">
+                    <span class="icon">🔒</span><span class="badge">0</span>
+                </div>
+                <div class="item-slot lock" data-item="time_pause" title="時間暫停 (Level 20)">
+                    <span class="icon">🔒</span><span class="badge">0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- [E] Color Picker Modal -->
+        <div id="color-picker-modal" class="hidden">
+            <div class="color-picker-box">
+                <h3 id="color-picker-title" style="color:#fff; margin:0 0 10px 0;">請選擇顏色</h3>
+                <div id="color-picker-grid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:15px;"></div>
+                <button class="big-btn" style="background:#ff6b6b; padding:8px 16px; margin-top:15px;" onclick="cancelItemUse()">取消</button>
+            </div>
+        </div>
 
     </div>
 
     <!-- Start Screen (full overlay) -->
-    <div id="start-screen" class="screen-overlay">
-        <div class="overlay-card">
-            <h1>🧋 Bubble Smash</h1>
-            <p>連結 3 顆以上同色珍珠消除！<br>完成老闆的飲料訂單闖關！</p>
-            <button id="start-btn" class="big-btn">開始遊戲</button>
+    <div id="start-screen" class="screen-overlay themed-start">
+        <!-- 裝飾用珍珠背景元件 -->
+        <div class="decorative-pearl pearl-1"></div>
+        <div class="decorative-pearl pearl-2"></div>
+        <div class="decorative-pearl pearl-3"></div>
+        <div class="decorative-pearl pearl-4"></div>
+
+        <div class="overlay-card split-layout">
+            
+            <div class="start-left">
+                <h1 style="font-size: 3.5rem; line-height: 1.2;">🧋<br>Bubble<br>Smash</h1>
+                <p style="margin-top: 10px; font-weight: bold; color: #ffe066;">珍珠大作戰</p>
+            </div>
+
+            <div class="start-right">
+                <button id="story-mode-btn" class="big-btn story-btn">劇情模式</button>
+                <button id="arcade-mode-btn" class="big-btn arcade-btn">街機模式 ⚡</button>
+            </div>
+
         </div>
     </div>
 
     <!-- Game Over Screen -->
     <div id="game-over-screen" class="screen-overlay" style="display:none;">
         <div class="overlay-card">
-            <h1>💔 老闆爆氣了！</h1>
+            <h1 id="game-over-title">💔 老闆爆氣了！</h1>
             <p>抵達關卡：<strong>Level <span id="final-level">1</span></strong></p>
             <button id="restart-btn" class="big-btn">再試一次</button>
         </div>
@@ -81,9 +165,57 @@
         </div>
     </div>
 
+    <!-- [NEW] Pause Menu Overlay -->
+    <div id="pause-overlay" class="screen-overlay" style="display: none;">
+        <div id="pause-content" class="menu-box">
+            <div class="menu-header">
+                <h2>遊戲暫停</h2>
+            </div>
+            
+            <div class="menu-section settings">
+                <div class="setting-item">
+                    <label>🎵 音量控制</label>
+                    <div class="slider-wrapper">
+                        <input type="range" id="volume-slider" min="0" max="1" step="0.05" value="0.6">
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <label>🎯 操作靈敏度</label>
+                    <div class="slider-wrapper">
+                        <input type="range" id="sensitivity-slider" min="0.5" max="2.5" step="0.1" value="1.0">
+                    </div>
+                </div>
+            </div>
+
+            <div class="menu-section level-select">
+                <div class="section-title">挑戰跳關 (共 60 關)</div>
+                <div id="level-grid" class="level-grid">
+                    <!-- JS 動態生成 60 關按鈕 -->
+                </div>
+            </div>
+
+            <div class="menu-footer">
+                <a href="https://www.instagram.com/lonelysub_game/" target="_blank" class="ig-link">
+                    📸 鼓勵與反饋 (Instagram)
+                </a>
+                <button id="resume-btn" class="primary-btn">返回遊戲</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- [F] Rotate Device Overlay (Mobile Portrait Only) -->
+    <div id="rotate-overlay">
+        <div class="rotate-content">
+            <div class="phone-icon"></div>
+            <h3>請旋轉裝置</h3>
+            <p>請橫放手機或平版以獲得最佳體驗</p>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <script src="order_data.js"></script>
     <script src="game.js"></script>
 </body>
 </html>
